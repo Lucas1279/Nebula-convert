@@ -42,7 +42,7 @@ const fmtBytes = (n) => {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
   if (n >= 1e3) return (n / 1e3).toFixed(0) + ' kB';
-  return n + ' B';
+  return Math.round(n) + ' B';
 };
 const fmtClock = (sec) => {
   if (sec == null || !isFinite(sec)) return '—';
@@ -111,10 +111,11 @@ function avcCompliance(paramStr, levelFallbackOk = true) {
   return { known: true, ok: goodProfiles.includes(profile) && level <= 52, profile, level };
 }
 function hevcLevel(paramStr) {
-  // e.g. 'hvc1.1.6.L153.B0' → level = 0x99(153)/30 = 5.1
-  const m = /\.L([0-9A-Fa-f]{3,4})\./.exec(paramStr || '');
+  // HEVC codec strings encode level_idc in decimal: L120 means 120/30 = level 4.0.
+  // Example: 'hvc1.1.6.L153.B0' → 153/30 = level 5.1.
+  const m = /\.L([0-9]{2,3})\./.exec(paramStr || '');
   if (!m) return null;
-  return parseInt(m[1], 16) / 30;
+  return parseInt(m[1], 10) / 30;
 }
 
 /* ---------------- support badges ---------------- */
@@ -287,11 +288,12 @@ function renderAnalysis() {
     vEl.innerHTML = '<b>✅ Video is PS5-official (H.264)</b> Some audio track(s) aren’t AAC — Turbo remux copies the video untouched and re-encodes just the audio to AAC-LC (fast: audio-only work).';
   } else if (a.videoStatus === 'community') {
     vEl.className = 'verdict warn';
-    vEl.innerHTML = '<b>⚠️ Video is HEVC/H.265</b> HEVC MP4s are widely verified to play on PS5 (including 4K HDR) and QuickTime on Mac, but Sony doesn’t officially list HEVC for USB video. <strong>Turbo remux copies it losslessly (fast).</strong> If your PS5 ever refuses it, re-run with <em>PS5-proof</em> to rebuild the video as H.264.';
+    const audioNote = a.audioOk ? '' : ' Non-AAC audio (such as E-AC-3) will still be transcoded to AAC-LC.';
+    vEl.innerHTML = `<b>⚠️ Video is HEVC/H.265</b> HEVC MP4s are widely reported to play on PS5 (including 4K HDR) and QuickTime on Mac, but Sony doesn’t officially list HEVC for USB video. <strong>Turbo remux copies the video losslessly.</strong>${audioNote} If your PS5 refuses this HEVC file, use <em>PS5-proof</em> to rebuild the video as H.264; a full-length re-encode will take much longer.`;
   } else {
     const why = a.vinfo ? `${codecLabel(a.vinfo.codec)}${a.vinfo.param ? ` (${a.vinfo.param})` : ''}` : 'This video codec';
     vEl.className = 'verdict bad';
-    vEl.innerHTML = `<b>🚫 ${why} won’t play on the PS5</b> It must be re-encoded to H.264 — <em>PS5-proof</em> mode has been selected for you. This uses your GPU/CPU via WebCodecs and runs several times faster than playback.`;
+    vEl.innerHTML = `<b>🚫 ${why} is outside the listed PS5 USB video profile</b> <em>PS5-proof</em> mode is selected to re-encode it to H.264. This is a full video transcode, not a quick remux; the time depends on your Mac and can be far longer than playback. Choose Turbo only if keeping the original video codec is acceptable.`;
   }
   updatePlan();
   updateEstimate();
@@ -299,9 +301,9 @@ function renderAnalysis() {
 
 /* ---------------- modes ---------------- */
 const MODE_TEXT = {
-  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; anything else (including AC-3/E-AC-3, DTS, TrueHD, FLAC, Opus…) is rebuilt as AAC-LC using native or bundled local WASM codecs so the PS5 has official sound. This is the <strong>only mode where a 20 GB movie can finish in about a minute</strong> — it moves bytes at disk speed with no video quality loss.',
-  proof: '<strong>🛡️ PS5-proof:</strong> output is guaranteed to match Sony’s official spec — H.264 High Profile video + AAC-LC audio in a plain MP4. If your video is already compliant H.264 it is still <em>copied untouched</em> (only the audio gets fixed). Otherwise the video is re-encoded with hardware acceleration. HDR becomes SDR in this mode.',
-  compress: '<strong>🗜️ Compress:</strong> video and audio are always re-encoded to hit your size/quality target. Great for shrinking a 20 GB rip into something a phone, tablet or small USB stick can hold. Takes real encode time (typically a few × faster than playback with hardware acceleration).',
+  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; other audio (including AC-3/E-AC-3) is rebuilt as AAC-LC. This is the fastest option and can approach a minute on fast storage when little media needs transcoding, but converting a full-length audio track or moving several GB may take longer.',
+  proof: '<strong>🛡️ PS5-proof:</strong> output uses Sony’s listed USB combination — H.264 High Profile video + AAC-LC audio in MP4. Compliant H.264 video is copied untouched; other video must be encoded frame-by-frame. A 2h25 movie cannot realistically be re-encoded in under a minute; actual time depends on your Mac. HDR becomes SDR in this mode.',
+  compress: '<strong>🗜️ Compress:</strong> video and audio are re-encoded to target size/quality. This takes real encode time, typically much longer than a remux; speed depends on the browser, codecs, and Mac hardware.',
 };
 
 function setMode(mode) {
@@ -758,12 +760,16 @@ async function startConversion() {
       // StreamTarget owns the stream: it already closed (and thus committed) the
       // file when the output finalized. Do NOT close it again here.
       state.writable = null;
+      const savedFile = await state.handle.getFile();
+      outSize = savedFile.size;
+      if (!outSize) throw new Error('The conversion finalized an empty output file; no usable MP4 was saved. Check the browser error log and retry.');
       log(`Finalized “${state.handle.name}” — ${fmtBytes(outSize)} written in ${fmtClock(elapsed)}`);
     } else if (opfsOutput) {
-      // getFile() returns a disk-backed File; Safari's normal download flow can
-      // read it without building a second full-size JS ArrayBuffer.
+      // getFile() returns a disk-backed File; the browser download flow can read
+      // it without building a second full-size JS ArrayBuffer.
       const file = await opfsOutput.handle.getFile();
       outSize = file.size;
+      if (!outSize) throw new Error('The conversion finalized an empty output file; no download was started. Check Safari/browser storage and retry.');
       blob = file;
       state.blob = file; state.blobName = suggestedName();
       if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
@@ -774,7 +780,8 @@ async function startConversion() {
       setTimeout(() => { void opfsOutput.cleanup?.(); }, 2 * 60 * 60 * 1000);
     } else {
       const buf = output.target.buffer;
-      outSize = buf.byteLength;
+      outSize = buf?.byteLength || 0;
+      if (!outSize) throw new Error('The conversion finalized an empty output buffer; no download was started. Check the browser error log and retry.');
       blob = new Blob([buf], { type: 'video/mp4' });
       state.blob = blob; state.blobName = suggestedName();
       if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);

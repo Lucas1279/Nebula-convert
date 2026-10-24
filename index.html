@@ -332,16 +332,13 @@ ol.ps5-steps code{color:#bfe9ff}
       <p><strong>What exactly happens to my file?</strong> In <em>Turbo remux</em> the video (and any compatible audio)
         is copied bit-for-bit from the MKV into an MP4 container — identical picture and sound, zero re-encoding.
         Only audio streams the PS5 can’t officially play (AC-3/E-AC-3, DTS, TrueHD, FLAC, Opus…) get re-encoded to <code>AAC-LC</code>. AC-3/E-AC-3 decoding and AAC encoding have bundled local WASM fallbacks.
-        Because everything is streamed, RAM use stays flat (~200&nbsp;MB) whether the file is 700&nbsp;MB or 70&nbsp;GB.</p>
+        Media is processed in chunks rather than loaded all at once into JavaScript memory. Actual memory and file-size limits depend on the browser; Safari’s staged-download path also needs enough OPFS quota and free disk space.</p>
       <p><strong>Why won’t some MP4s play on the PS5?</strong> Sony’s media player officially accepts MP4 with
         <code>H.264 High Profile (≤ Level 5.2)</code> video and <code>AAC-LC</code> audio, plus WebM (VP9/Opus).
         Files that fail are usually: H.265/HEVC video (plays on most PS5s per community testing, but isn’t on Sony’s list),
         DTS/AC-3/E-AC-3/TrueHD audio, 10-bit H.264, or anything on a FAT32 stick over 4&nbsp;GB.
         The <em>PS5-proof</em> mode removes all doubt by rebuilding video as H.264 High + AAC.</p>
-      <p><strong>Is it really under a minute?</strong> A copy conversion moves roughly 2× the file size (read + write).
-        On an NVMe SSD (~500&nbsp;MB/s+) a 20&nbsp;GB movie finishes in about a minute; on a slower disk or a USB stick
-        it takes proportionally longer — the limit is your hardware, not this page. Re-encoding modes depend on your
-        GPU/CPU and typically run several times faster than playback.</p>
+      <p><strong>Can it finish in under a minute?</strong> Only sometimes. A Turbo remux copies video rather than re-encoding it, so speed depends on storage and whether audio needs conversion. Reading and writing a 20&nbsp;GB file at 500&nbsp;MB/s is about 80 seconds in theory; slower storage or E-AC-3-to-AAC conversion adds time. PS5-proof H.264 mode re-encodes every video frame and can take many minutes or longer for a feature-length movie; hardware acceleration does not make a 2h25 transcode a one-minute job.</p>
       <p><strong>Subtitles?</strong> The PS5’s Media Gallery ignores embedded subtitles entirely, and MKV subtitle
         formats (PGS, ASS/SSA) can’t live in an MP4 — subtitle tracks are dropped and listed in the log. Burn them in
         beforehand if you truly need them on the TV.</p>

@@ -53,6 +53,7 @@ File System Access API need. The page makes **zero network requests** at convers
 - **🛡️ PS5-proof** — guarantees Sony’s official USB combo: H.264 High Profile ≤ L5.2 + AAC-LC in MP4.
 - **🗜️ Compress** — hardware-accelerated re-encode to a target size (resolution cap, quality, H.264/HEVC, fps cap).
 - Built-in PS5 USB guide (exFAT/FAT32, folder at stick root, Media Gallery) and Mac notes.
+- HEVC Main/Main10 at or below Level 5.2 can be kept in Turbo remux as MP4 video (community-reported PS5 playback, not Sony’s listed USB profile). PS5-proof H.264 requires a full frame-by-frame transcode and can take much longer than a remux.
 - Safari downloads stream through origin-private site storage (OPFS) when available, then use Safari’s normal Downloads flow. Safari does not support the page-level picker for an arbitrary chosen output path; quota and disk space apply, and Safari Private Browsing may not provide OPFS. The OPFS writer paths have been exercised in Chromium with the save picker disabled, but the deployed site should still be verified in actual Safari before relying on multi-GB conversions.
 
 Media engine: [Mediabunny](https://mediabunny.dev/) (MPL-2.0), with `@mediabunny/ac3` and `@mediabunny/aac-encoder` local WASM fallbacks. Theme & app: lucas1279.
