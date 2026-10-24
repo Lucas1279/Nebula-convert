@@ -2,7 +2,7 @@
    NebulaConvert — MKV / any video → PS5+Mac-ready MP4, 100% local
    Engine: mediabunny (MPL-2.0) · Theme: Nebula ISO2GOD
    ================================================================ */
-import * as MB from './vendor/mediabunny.js?v=timestamp-trace-20261024';
+import * as MB from './vendor/mediabunny.js?v=safari-opus-wasm-aac-20261024';
 
 const $ = (id) => document.getElementById(id);
 
@@ -77,6 +77,12 @@ const codecLabel = (c) => (c && CODEC_LABEL[c]) || (c ? c.toUpperCase() : 'unkno
 
 let aacFallbackRegistered = false;
 
+function isSafariWebKit() {
+  const ua = navigator.userAgent || '';
+  return navigator.vendor === 'Apple Computer, Inc.'
+    && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|Brave/i.test(ua);
+}
+
 async function ensureAudioFallbacks() {
   const tracks = state.analysis?.ainfos || [];
   const needsAac = tracks.some((a) => a.codec !== 'aac');
@@ -92,13 +98,21 @@ async function ensureAudioFallbacks() {
 
   let nativeAac = false;
   try { nativeAac = await MB.canEncodeAudio('aac'); } catch { /* use fallback */ }
-  if (!nativeAac && !aacFallbackRegistered) {
+  const safariOpus51 = isSafariWebKit() && tracks.some((audio) => audio.codec === 'opus' && audio.channels === 6);
+  const shouldUseBundledAac = safariOpus51 || !nativeAac;
+  if (shouldUseBundledAac) {
     if (typeof MB.registerAacEncoder !== 'function') {
-      throw new Error('This browser has no AAC-LC encoder and the local fallback could not load.');
+      throw new Error('This browser has no usable AAC-LC encoder and the local fallback could not load.');
     }
-    MB.registerAacEncoder();
-    aacFallbackRegistered = true;
-    log('Native AAC encoding is unavailable; using the bundled local AAC-LC encoder (WASM).');
+    if (!aacFallbackRegistered) {
+      MB.registerAacEncoder();
+      aacFallbackRegistered = true;
+    }
+    if (safariOpus51) {
+      log('Safari + 5.1 Opus: using bundled local AAC-LC encoder (WASM) instead of native AAC to avoid the reproduced timestamp regression. This may be slower.');
+    } else {
+      log('Native AAC encoding is unavailable; using the bundled local AAC-LC encoder (WASM).');
+    }
   }
 }
 
