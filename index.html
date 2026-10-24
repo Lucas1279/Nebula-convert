@@ -259,10 +259,10 @@ ol.ps5-steps code{color:#bfe9ff}
 
     <h3>💾 3 · Where should the MP4 go?</h3>
     <div class="radio-cards">
-      <label class="radio-card"><span class="h"><input type="radio" name="outMode" value="disk" id="outDisk" checked> 📁 Save to a file (recommended)</span>
-        <span class="d">The MP4 is streamed straight to a file you choose — on your Mac’s disk or directly onto the USB stick. Nothing is held in memory, so <strong>any size works</strong>. Chrome / Edge.</span></label>
-      <label class="radio-card"><span class="h"><input type="radio" name="outMode" value="download" id="outDownload"> ⬇️ Browser download</span>
-        <span class="d">The finished MP4 is downloaded through the browser. Works in <strong>every browser</strong> (Safari, Firefox), but the output has to fit in memory — fine up to a few GB, risky beyond.</span></label>
+      <label class="radio-card"><span class="h"><input type="radio" name="outMode" value="disk" id="outDisk" checked> 📁 Save to a chosen file (Chrome/Edge)</span>
+        <span class="d">Uses the browser’s save-location picker and streams directly to the file you choose. Safari does not provide that picker.</span></label>
+      <label class="radio-card"><span class="h"><input type="radio" name="outMode" value="download" id="outDownload"> ⬇️ Browser download (Safari-compatible)</span>
+        <span class="d">On Safari, NebulaConvert streams the MP4 to origin-private site storage (OPFS) when available, then hands it to Safari’s normal Downloads flow. You cannot choose a folder here; allow enough site storage and disk space. Safari Private Browsing may not provide OPFS.</span></label>
     </div>
     <div class="setup" id="diskSetup">
       <strong>Pick the file to write.</strong> It is streamed while converting, so it never has to fit in memory.
@@ -271,8 +271,7 @@ ol.ps5-steps code{color:#bfe9ff}
       <span class="tiny" id="chosenPath" style="color:#9ff3d2"></span></div>
     </div>
     <div class="setup" id="dlSetup" hidden>
-      No setup needed. When the conversion finishes, your browser downloads the MP4 automatically (watch for a
-      “keep/discard” prompt on large downloads). On Safari/Firefox, files beyond ~2–3&nbsp;GB may fail — switch to Chrome/Edge for those.
+      No setup needed. On Safari, the MP4 is written in chunks to temporary site storage (OPFS) when supported, then downloaded normally. Safari cannot show a save-folder picker; watch its Downloads panel and keep this tab open until the file is handed off. OPFS may be unavailable in Safari Private Browsing or when storage is full; use Chrome/Edge for a direct-to-file save in that case.
     </div>
 
     <div class="btn-row">
@@ -352,19 +351,18 @@ ol.ps5-steps code{color:#bfe9ff}
       <p><strong>Which containers can I feed it?</strong> MKV, WebM, MP4, MOV/M4V, MPEG-TS / M2TS (AVCHD, including
         from camcorders), OGG, raw AAC/ADTS, MP3, FLAC, WAV. AVI, WMV, FLV and DVD VOBs aren’t supported in-browser —
         the page tells you immediately if you drop one.</p>
-      <p><strong>Browser notes:</strong> Chrome/Edge give the best experience (streaming “Save to a file”, full
-        hardware re-encode). Safari and Firefox work via the download path and support most re-encodes, but can’t
-        stream multi-GB outputs to a chosen file. Video is powered by WebCodecs; local WASM fallbacks decode AC-3/E-AC-3 and encode AAC-LC when the browser lacks support.</p>
+      <p><strong>Browser notes:</strong> Chrome/Edge can stream straight to a file or USB destination you choose.
+        Safari cannot show that picker, so its download path streams to origin-private site storage (OPFS) when available, then hands the completed MP4 to Safari Downloads; allow enough site-storage and disk space. OPFS may be unavailable in Safari Private Browsing. Video uses WebCodecs; local WASM fallbacks decode AC-3/E-AC-3 and encode AAC-LC when needed.</p>
       <p><strong>PS4?</strong> PS5-proof output (H.264 ≤ 1080p… actually ≤ L4.2 for PS4) also plays on a PS4 from the
         same exFAT/FAT32 stick. HEVC does not play on PS4.</p>
       <p><strong>Privacy:</strong> this page has no server component and makes no network requests at conversion time.
-        Use “Save page” and it even works offline. The only data written is the output you choose.</p>
+        Use “Save page” and it even works offline. Safari’s large-file download path may stage the output temporarily in this site’s origin-private storage (OPFS) before handing it to Downloads; the app cleans it up after a delay and tries to remove stale temporary files on a later visit.</p>
     </div>
   </details>
 
   <footer>
     <div>🎬 <strong>NebulaConvert</strong> — sibling of <a href="https://lucas1279.github.io/nebula-iso2god/">Nebula ISO2GOD</a>, same nebula, different mission.</div>
-    <div class="tiny">Media engine: <a href="https://mediabunny.dev/">Mediabunny</a> (MPL-2.0) · WebCodecs · local WASM AC-3/E-AC-3 decoder + AAC-LC fallback · File System Access API. No file ever leaves your machine.</div>
+    <div class="tiny">Media engine: <a href="https://mediabunny.dev/">Mediabunny</a> (MPL-2.0) · WebCodecs · local WASM AC-3/E-AC-3 decoder + AAC-LC fallback · File System Access + Safari OPFS download fallback. Media stays on your device.</div>
   </footer>
 </div>
 

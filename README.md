@@ -49,13 +49,14 @@ File System Access API need. The page makes **zero network requests** at convers
 ## What it does
 
 - **🚀 Turbo remux** — repacks MKV→MP4 with zero video quality loss; only incompatible audio
-  (AC-3/E-AC-3/DTS/TrueHD/FLAC/Opus…) is rebuilt as AAC-LC, with local WASM codec fallbacks. Disk-speed only, streams 20 GB+ files with flat RAM.
+  (AC-3/E-AC-3/DTS/TrueHD/FLAC/Opus…) is rebuilt as AAC-LC, with local WASM codec fallbacks. Disk-speed only; the output is streamed.
 - **🛡️ PS5-proof** — guarantees Sony’s official USB combo: H.264 High Profile ≤ L5.2 + AAC-LC in MP4.
 - **🗜️ Compress** — hardware-accelerated re-encode to a target size (resolution cap, quality, H.264/HEVC, fps cap).
 - Built-in PS5 USB guide (exFAT/FAT32, folder at stick root, Media Gallery) and Mac notes.
+- Safari downloads stream through origin-private site storage (OPFS) when available, then use Safari’s normal Downloads flow. Safari does not support the page-level picker for an arbitrary chosen output path; quota and disk space apply, and Safari Private Browsing may not provide OPFS. The OPFS writer paths have been exercised in Chromium with the save picker disabled, but the deployed site should still be verified in actual Safari before relying on multi-GB conversions.
 
 Media engine: [Mediabunny](https://mediabunny.dev/) (MPL-2.0), with `@mediabunny/ac3` and `@mediabunny/aac-encoder` local WASM fallbacks. Theme & app: lucas1279.
 
 ### Update an existing Pages site
 
-Replace the repository files with this folder’s contents (not the ZIP itself), keeping `vendor/mediabunny.js` in `vendor/`, then commit to `main`. GitHub Pages deploys the update automatically. The AC-3/E-AC-3 and AAC fallbacks run locally; no media is uploaded.
+Replace the repository files with this folder’s contents (not the ZIP itself), keeping `vendor/mediabunny.js` in `vendor/`, then commit to `main`. GitHub Pages deploys the update automatically. AC-3/E-AC-3 and AAC fallbacks run locally; Safari streams large outputs through its origin-private storage when available, then starts a normal download. No media is uploaded.

@@ -29,7 +29,8 @@ const hasSavePicker = typeof window.showSaveFilePicker === 'function';
 const state = {
   file: null, input: null, analysis: null,
   mode: 'turbo', outMode: 'disk', handle: null,
-  conversion: null, writable: null, blobUrl: null, blob: null, blobName: '',
+  conversion: null, writable: null, opfsOutput: null, outputMethod: 'memory',
+  blobUrl: null, blob: null, blobName: '',
   converting: false, cancelRequested: false,
   t0: 0, timer: 0, bytesWritten: 0, maxProgress: 0,
 };
@@ -119,7 +120,7 @@ function hevcLevel(paramStr) {
 /* ---------------- support badges ---------------- */
 async function renderSupport() {
   const badges = [];
-  badges.push(`<span class="badge ${hasSavePicker ? 'ok' : 'warn'}">${hasSavePicker ? '✅' : '⚠️'} Stream-save to any file ${hasSavePicker ? '' : '(needs Chrome/Edge)'}</span>`);
+  badges.push(`<span class="badge ${hasSavePicker ? 'ok' : 'warn'}">${hasSavePicker ? '✅' : '⚠️'} Stream-save to a chosen file ${hasSavePicker ? '' : '(needs Chrome/Edge)'}</span>`);
   try {
     const avc = await MB.canEncodeVideo('avc');
     badges.push(`<span class="badge ${avc ? 'ok' : 'warn'}">${avc ? '✅' : '⚠️'} Hardware H.264 re-encode</span>`);
@@ -309,7 +310,7 @@ function setMode(mode) {
   els.compressOpts.hidden = mode !== 'compress';
   els.modeNote.innerHTML = MODE_TEXT[mode];
   if (mode === 'proof' && state.canAvc === false) {
-    els.modeNote.innerHTML += '<br><span style="color:var(--err)">⚠️ This browser can’t encode H.264 (WebCodecs). Use Chrome, Edge or Safari for re-encode modes.</span>';
+    els.modeNote.innerHTML += '<br><span style="color:var(--err)">⚠️ This browser can’t encode H.264 with WebCodecs. Re-encode modes need a compatible browser and hardware encoder; Turbo can still copy compatible video.</span>';
   }
   updatePlan();
   updateEstimate();
@@ -400,7 +401,7 @@ document.querySelectorAll('input[name="outMode"]').forEach((r) => r.addEventList
 
 if (!hasSavePicker) {
   $('outDisk').disabled = true;
-  $('outDisk').closest('.radio-card').querySelector('.d').textContent = 'Not available in this browser — use Chrome or Edge (both free on Mac & Windows) for streaming saves of huge files. Download mode below works everywhere.';
+  $('outDisk').closest('.radio-card').querySelector('.d').textContent = 'This browser does not expose a picker for saving to an arbitrary folder. Use Browser download below; NebulaConvert will stream through temporary site storage (OPFS) when available, then hand the MP4 to Downloads.';
   $('outDownload').checked = true;
 }
 outModeFromUI();
@@ -410,6 +411,154 @@ function suggestedName() {
   const ext = (state.file.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
   return ext === 'mp4' ? `${base}-converted.mp4` : `${base}.mp4`;
 }
+
+// Safari does not expose a picker for an arbitrary user-selected destination. Use
+// the Origin Private File System as a disk-backed staging area, then hand Safari
+// a File object for its normal Downloads flow. Newer Safari has async createWritable;
+// older versions can write through a synchronous access handle in a dedicated worker.
+async function createOpfsOutput() {
+  const storage = navigator.storage;
+  if (typeof storage?.getDirectory !== 'function') return null;
+
+  const root = await storage.getDirectory();
+  const token = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const name = `nebulaconvert-${token}.mp4`;
+  const handle = await root.getFileHandle(name, { create: true });
+
+  if (typeof handle.createWritable === 'function') {
+    const nativeStream = await handle.createWritable({ keepExistingData: false });
+    const writer = nativeStream.getWriter();
+    let closed = false;
+    const writable = new WritableStream({
+      write: (chunk) => writer.write(chunk),
+      close: async () => { await writer.close(); closed = true; },
+      abort: async (reason) => { try { await writer.abort(reason); } finally { closed = true; } },
+    }, { highWaterMark: 1 });
+    return {
+      kind: 'opfs', name, handle, root, writable,
+      abort: async () => {
+        if (!closed) { try { await writer.abort(); } catch { /* ignore */ } }
+        try { await root.removeEntry(name); } catch { /* ignore */ }
+      },
+      cleanup: async () => { try { await root.removeEntry(name); } catch { /* ignore */ } },
+    };
+  }
+
+  if (typeof Worker !== 'function') {
+    try { await root.removeEntry(name); } catch { /* ignore */ }
+    return null;
+  }
+
+  const workerCode = `
+    let root = null, access = null, path = null;
+    self.onmessage = async (event) => {
+      const m = event.data;
+      try {
+        if (m.type === 'init') {
+          root = await navigator.storage.getDirectory();
+          path = m.name;
+          const file = await root.getFileHandle(path, { create: true });
+          access = await file.createSyncAccessHandle();
+          access.truncate(0);
+          self.postMessage({ id: m.id, ok: true });
+        } else if (m.type === 'write') {
+          if (!access) throw new Error('Temporary OPFS file is not open.');
+          const bytes = new Uint8Array(m.buffer);
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const count = access.write(bytes.subarray(offset), { at: m.position + offset });
+            if (!count) throw new Error('Could not write to temporary browser storage.');
+            offset += count;
+          }
+          self.postMessage({ id: m.id, ok: true });
+        } else if (m.type === 'close') {
+          if (access) { access.flush(); access.close(); access = null; }
+          self.postMessage({ id: m.id, ok: true });
+        } else if (m.type === 'abort') {
+          if (access) { access.close(); access = null; }
+          if (root && path) { try { await root.removeEntry(path); } catch { /* already removed */ } }
+          self.postMessage({ id: m.id, ok: true });
+        }
+      } catch (error) {
+        self.postMessage({ id: m.id, error: error && error.message ? error.message : String(error) });
+      }
+    };
+  `;
+  const workerUrl = URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' }));
+  const worker = new Worker(workerUrl);
+  let nextId = 0;
+  let workerClosed = false;
+  const pending = new Map();
+  const request = (type, payload = {}, transfer = []) => new Promise((resolve, reject) => {
+    const id = ++nextId;
+    pending.set(id, { resolve, reject });
+    try { worker.postMessage({ id, type, ...payload }, transfer); }
+    catch (error) { pending.delete(id); reject(error); }
+  });
+  worker.onmessage = (event) => {
+    const { id, error } = event.data || {};
+    const job = pending.get(id);
+    if (!job) return;
+    pending.delete(id);
+    error ? job.reject(new Error(error)) : job.resolve();
+  };
+  worker.onerror = (event) => {
+    const error = new Error(event.message || 'Temporary-storage worker failed.');
+    for (const job of pending.values()) job.reject(error);
+    pending.clear();
+  };
+  const stopWorker = () => {
+    if (workerClosed) return;
+    workerClosed = true;
+    worker.terminate();
+    URL.revokeObjectURL(workerUrl);
+  };
+
+  try {
+    await request('init', { name });
+  } catch (error) {
+    stopWorker();
+    try { await root.removeEntry(name); } catch { /* ignore */ }
+    throw error;
+  }
+
+  const writable = new WritableStream({
+    write: (chunk) => {
+      if (chunk?.type !== 'write' || !chunk.data || !Number.isFinite(chunk.position)) {
+        throw new TypeError('Unexpected MP4 output chunk.');
+      }
+      const copy = chunk.data.slice();
+      return request('write', { position: chunk.position, buffer: copy.buffer }, [copy.buffer]);
+    },
+    close: async () => { await request('close'); stopWorker(); },
+    abort: async () => { try { await request('abort'); } finally { stopWorker(); } },
+  }, { highWaterMark: 1 });
+
+  return {
+    kind: 'opfs', name, handle, root, writable,
+    abort: async () => {
+      if (!workerClosed) { try { await request('abort'); } catch { /* ignore */ } stopWorker(); }
+      try { await root.removeEntry(name); } catch { /* ignore */ }
+    },
+    cleanup: async () => { try { await root.removeEntry(name); } catch { /* ignore */ } },
+  };
+}
+
+async function cleanupStaleOpfsFiles() {
+  if (typeof navigator.storage?.getDirectory !== 'function') return;
+  try {
+    const root = await navigator.storage.getDirectory();
+    const staleBefore = Date.now() - 24 * 60 * 60 * 1000;
+    for await (const [name, handle] of root.entries()) {
+      if (!name.startsWith('nebulaconvert-') || handle.kind !== 'file') continue;
+      try {
+        const file = await handle.getFile();
+        if (file.lastModified < staleBefore) await root.removeEntry(name);
+      } catch { /* ignore an entry that is still open/in use */ }
+    }
+  } catch { /* OPFS cleanup is best-effort */ }
+}
+void cleanupStaleOpfsFiles();
 
 els.chooseFileBtn.addEventListener('click', async () => {
   try {
@@ -510,8 +659,39 @@ async function startConversion() {
     }
   }
 
-  const toDisk = !!writable;
-  const target = toDisk ? new MB.StreamTarget(writable, { chunked: true }) : new MB.BufferTarget();
+  // If the user chose a browser download, use OPFS as a disk-backed staging area
+  // when available. This is Safari's large-file path; Safari cannot expose a
+  // user-picked save path, but it can download a File produced from OPFS.
+  let opfsOutput = null;
+  let opfsSpaceNote = '';
+  if (!writable && state.outMode === 'download') {
+    try { opfsOutput = await createOpfsOutput(); }
+    catch (err) {
+      if (state.file.size >= 1.5e9) {
+        showError(`Could not open temporary browser storage (${err?.message || err}). This ${fmtBytes(state.file.size)} input is too large for the in-memory download fallback. Check browser storage/free disk space, or use Chrome/Edge for a direct-to-file save.`);
+        return;
+      }
+      log(`Temporary browser storage unavailable; using memory for this smaller output (${err?.message || err}).`);
+    }
+    if (!opfsOutput && state.file.size >= 1.5e9) {
+      showError(`This browser cannot stream to temporary storage, and the in-memory download is risky for a ${fmtBytes(state.file.size)} input. Update your browser or use Chrome/Edge’s direct-to-file save.`);
+      return;
+    }
+    if (opfsOutput) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        if (estimate?.quota && Number.isFinite(estimate.usage)) {
+          const free = Math.max(0, estimate.quota - estimate.usage);
+          opfsSpaceNote = `Temporary browser storage: about ${fmtBytes(free)} available (output needs at least ${fmtBytes(state.file.size)}; re-encoding may need more).`;
+        }
+      } catch { /* storage estimates are optional */ }
+    }
+  }
+
+  const toDisk = !!writable && !opfsOutput;
+  const outputWritable = writable || opfsOutput?.writable || null;
+  const streamed = !!outputWritable;
+  const target = streamed ? new MB.StreamTarget(outputWritable, { chunked: true }) : new MB.BufferTarget();
   const output = new MB.Output({ format: new MB.Mp4OutputFormat(), target });
   const { video, audio } = buildTrackOptions();
 
@@ -519,13 +699,18 @@ async function startConversion() {
   els.doneCard.hidden = true;
   els.logEl.innerHTML = '';
   state.converting = true; state.cancelRequested = false;
-  state.bytesWritten = 0; state.maxProgress = 0; state.writable = writable;
+  state.bytesWritten = 0; state.maxProgress = 0; state.writable = outputWritable;
+  state.opfsOutput = opfsOutput;
+  state.outputMethod = toDisk ? 'file' : (opfsOutput ? 'opfs' : 'memory');
   els.convertBtn.disabled = true; els.cancelBtn.disabled = false;
   els.progressCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const modeLabel = { turbo: 'Turbo remux', proof: 'PS5-proof', compress: 'Compress' }[state.mode];
-  els.statMode.textContent = modeLabel + (toDisk ? ' · streaming to disk' : ' · in-memory download');
+  const destinationLabel = toDisk ? ' · streaming to chosen file' : opfsOutput ? ' · streaming to temporary storage' : ' · in-memory download';
+  els.statMode.textContent = modeLabel + destinationLabel;
   log(`Loaded “${state.file.name}” (${fmtBytes(state.file.size)}) — mode: ${modeLabel}`);
+  if (opfsSpaceNote) log(opfsSpaceNote);
+  if (opfsOutput) log('Output is streaming to temporary site storage (OPFS); the finished MP4 will be sent to the browser Downloads flow.');
 
   try {
     await ensureAudioFallbacks();
@@ -574,6 +759,19 @@ async function startConversion() {
       // file when the output finalized. Do NOT close it again here.
       state.writable = null;
       log(`Finalized “${state.handle.name}” — ${fmtBytes(outSize)} written in ${fmtClock(elapsed)}`);
+    } else if (opfsOutput) {
+      // getFile() returns a disk-backed File; Safari's normal download flow can
+      // read it without building a second full-size JS ArrayBuffer.
+      const file = await opfsOutput.handle.getFile();
+      outSize = file.size;
+      blob = file;
+      state.blob = file; state.blobName = suggestedName();
+      if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
+      state.blobUrl = URL.createObjectURL(file);
+      triggerDownload(state.blobUrl, state.blobName);
+      state.writable = null;
+      log(`MP4 staged in site storage (OPFS) and handed to Downloads — ${fmtBytes(outSize)} in ${fmtClock(elapsed)}`);
+      setTimeout(() => { void opfsOutput.cleanup?.(); }, 2 * 60 * 60 * 1000);
     } else {
       const buf = output.target.buffer;
       outSize = buf.byteLength;
@@ -588,8 +786,9 @@ async function startConversion() {
     finish(elapsed, outSize, toDisk, modeLabel);
   } catch (err) {
     clearInterval(state.timer); state.timer = 0;
-    try { await state.writable?.abort(); } catch { /* ignore */ }
-    state.writable = null;
+    try { await state.writable?.abort(); } catch { /* stream may be locked by StreamTarget */ }
+    try { await state.opfsOutput?.abort?.(); } catch { /* ignore */ }
+    state.writable = null; state.opfsOutput = null; state.outputMethod = 'memory';
     if (err?.name === 'ConversionCanceledError' || state.cancelRequested) {
       els.progressStatus.textContent = 'Canceled.';
       log('Conversion canceled.' + (state.outMode === 'disk' ? ' A partially written file may remain at the destination — overwrite or delete it.' : ''));
@@ -640,7 +839,9 @@ function finish(elapsed, outSize, toDisk, modeLabel) {
   const avg = elapsed > 0 ? outSize / elapsed : 0;
   els.doneBanner.innerHTML = toDisk
     ? `Your MP4 has been streamed to <strong>“${state.handle.name}”</strong> — nothing was held in memory.`
-    : `Your MP4 (<strong>${state.blobName}</strong>) should be downloading now.`;
+    : state.outputMethod === 'opfs'
+      ? `Your MP4 was streamed to temporary browser storage and handed to Downloads: <strong>${state.blobName}</strong>. Use “Download again” if your browser did not start it.`
+      : `Your MP4 (<strong>${state.blobName}</strong>) should be downloading now.`;
   els.doneStats.innerHTML = `
     <div class="est"><div class="k">Output size</div><div class="v">${fmtBytes(outSize)}</div></div>
     <div class="est"><div class="k">Time</div><div class="v">${fmtClock(elapsed)}</div></div>
@@ -662,6 +863,7 @@ function resetAll() {
   if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
   state.file = null; state.input = null; state.analysis = null; state.handle = null;
   state.blob = null; state.blobUrl = null; state.conversion = null; state.writable = null;
+  state.opfsOutput = null; state.outputMethod = 'memory';
   els.pickedName.textContent = ''; els.chosenPath.textContent = '';
   els.fileCard.hidden = true; els.progressCard.hidden = true; els.doneCard.hidden = true;
   els.logEl.innerHTML = ''; clearError();
