@@ -2,7 +2,7 @@
    NebulaConvert — MKV / any video → PS5+Mac-ready MP4, 100% local
    Engine: mediabunny (MPL-2.0) · Theme: Nebula ISO2GOD
    ================================================================ */
-import * as MB from './vendor/mediabunny.js';
+import * as MB from './vendor/mediabunny.js?v=timestamp-diagnostic-20261024';
 
 const $ = (id) => document.getElementById(id);
 

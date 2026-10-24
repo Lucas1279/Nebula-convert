@@ -58,6 +58,7 @@ The dev copy lives in `site/` (served by `server.py`); keep both in sync if you 
 - `test-e2e.mjs` — upload → analysis → PS5 verdict → convert → download; ffprobe-verified H.264/AAC output.
 - `test-eac3-fallback.mjs` — E-AC-3 5.1 input converted to AAC-LC 5.1 in PS5-proof mode using local WASM decoder/encoder; full decode verified.
 - `test-opus-fallback.mjs` — synthetic AV1 + Opus 5.1 MKV remuxed to MP4 with AAC-LC 5.1; ffprobe, full decode, and 5.1 channel-tone mapping verified.
+- Timestamp diagnostic — a GOP timestamp error now reports output track number, media type, and codec. It asks for only the displayed text; the video stays on the user's device. The two synthetic timestamp regressions pass, but that does **not** establish that the original movie is fixed; it remains to be reproduced with the user's local excerpt.
 - `test-safari-opfs.mjs` — browser-download path streamed through OPFS and downloaded; also tested the dedicated-worker synchronous OPFS fallback; both outputs full-decode verified.
 - `test-hevc-level.mjs` — verifies HEVC `L120` is parsed as decimal level_idc 120 (Level 4.0), not hexadecimal.
 - `test-e2e3.mjs` — the streaming save-to-disk path with a mocked File System Access API: byte-exact output
