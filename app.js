@@ -86,6 +86,9 @@ async function ensureAudioFallbacks() {
   if (hasDolbyDigital) {
     log('Using bundled local AC-3/E-AC-3 decoder (WASM) for Dolby audio.');
   }
+  if (tracks.some((a) => a.codec === 'opus')) {
+    log('Using bundled local Opus decoder (WASM) for Opus audio.');
+  }
 
   let nativeAac = false;
   try { nativeAac = await MB.canEncodeAudio('aac'); } catch { /* use fallback */ }
@@ -139,6 +142,7 @@ async function renderSupport() {
     badges.push(`<span class="badge ${fallback ? 'ok' : 'warn'}">${fallback ? '✅ AAC-LC audio encode (local WASM)' : '⚠️ AAC audio encode unavailable'}</span>`);
   }
   badges.push('<span class="badge ok">✅ AC-3/E-AC-3 decode (local WASM)</span>');
+  badges.push('<span class="badge ok" title="Mono/stereo and standard Matroska 5.1 channel layouts">✅ Opus decode (local WASM)</span>');
   try {
     const hevc = await MB.canEncodeVideo('hevc');
     state.canHevc = hevc;
@@ -216,7 +220,14 @@ async function analyze(file) {
       try { fps = (await v.computeFrameRateMetrics({ targetPacketCount: 400 })).bestGuessFrameRate; } catch { fps = null; }
       const avc = codec === 'avc' ? avcCompliance(param) : null;
       const hLevel = codec === 'hevc' ? hevcLevel(param) : null;
-      vinfo = { codec, param, w, h, dw, dh, rot, fps, avc, hLevel };
+      let browserCanDecode = null, browserCanEncodeAvc = null;
+      if (codec === 'av1') {
+        browserCanDecode = await v.canDecode().catch(() => false);
+        const encodeConfig = { width: dw || w, height: dh || h };
+        if (fps) encodeConfig.frameRate = fps;
+        browserCanEncodeAvc = await MB.canEncodeVideo('avc', encodeConfig).catch(() => false);
+      }
+      vinfo = { codec, param, w, h, dw, dh, rot, fps, avc, hLevel, browserCanDecode, browserCanEncodeAvc };
     }
 
     const ainfos = [];
@@ -241,9 +252,12 @@ async function analyze(file) {
     state.analysis = { file, format, duration, vinfo, ainfos, subCount: otherCount, videoStatus, audioOk };
     renderAnalysis();
 
-    // Default mode: safest sensible choice
-    if (videoStatus === 'incompatible') setMode('proof');
-    else setMode('turbo');
+    // Default to PS5-proof only when this browser can plausibly decode and re-encode AV1.
+    // Otherwise Turbo is still a valid MP4 remux, but its AV1 video is not PS5-safe.
+    if (videoStatus === 'incompatible') {
+      const av1ProofUnavailable = vinfo?.codec === 'av1' && (!vinfo.browserCanDecode || !vinfo.browserCanEncodeAvc);
+      setMode(av1ProofUnavailable ? 'turbo' : 'proof');
+    } else setMode('turbo');
 
     els.fileCard.hidden = false;
     els.fileCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -290,6 +304,18 @@ function renderAnalysis() {
     vEl.className = 'verdict warn';
     const audioNote = a.audioOk ? '' : ' Non-AAC audio (such as E-AC-3) will still be transcoded to AAC-LC.';
     vEl.innerHTML = `<b>⚠️ Video is HEVC/H.265</b> HEVC MP4s are widely reported to play on PS5 (including 4K HDR) and QuickTime on Mac, but Sony doesn’t officially list HEVC for USB video. <strong>Turbo remux copies the video losslessly.</strong>${audioNote} If your PS5 refuses this HEVC file, use <em>PS5-proof</em> to rebuild the video as H.264; a full-length re-encode will take much longer.`;
+  } else if (a.vinfo?.codec === 'av1') {
+    const canProof = a.vinfo.browserCanDecode && a.vinfo.browserCanEncodeAvc;
+    if (!canProof) {
+      const missing = [];
+      if (!a.vinfo.browserCanDecode) missing.push('an AV1 decoder for this stream');
+      if (!a.vinfo.browserCanEncodeAvc) missing.push(`an H.264 encoder at ${a.vinfo.dw}×${a.vinfo.dh}`);
+      vEl.className = 'verdict warn';
+      vEl.innerHTML = `<b>🚫 AV1 video is not in Sony’s listed PS5 USB profile.</b> This browser did not report ${missing.join(' or ')}; Turbo is selected so you can still make an MP4, but it keeps AV1 and is <strong>not PS5-safe</strong>; Mac playback also depends on AV1 support. Opus audio will be rebuilt as AAC-LC. PS5-proof requires a full AV1-to-H.264 transcode on a browser/device with both codecs; for a two-hour 4K file, it is not expected to meet the under-one-minute goal.`;
+    } else {
+      vEl.className = 'verdict bad';
+      vEl.innerHTML = '<b>🚫 AV1 video is not in Sony’s listed PS5 USB profile.</b> This browser reports AV1 decode and H.264 encode support at the source size, so <em>PS5-proof</em> is selected. The check is not a guarantee that a full 4K transcode will complete; expect far longer than a remux. Turbo can make an MP4 faster, but it retains AV1, is not PS5-safe, and Mac playback depends on AV1 support.';
+    }
   } else {
     const why = a.vinfo ? `${codecLabel(a.vinfo.codec)}${a.vinfo.param ? ` (${a.vinfo.param})` : ''}` : 'This video codec';
     vEl.className = 'verdict bad';
@@ -301,8 +327,8 @@ function renderAnalysis() {
 
 /* ---------------- modes ---------------- */
 const MODE_TEXT = {
-  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; other audio (including AC-3/E-AC-3) is rebuilt as AAC-LC. This is the fastest option and can approach a minute on fast storage when little media needs transcoding, but converting a full-length audio track or moving several GB may take longer.',
-  proof: '<strong>🛡️ PS5-proof:</strong> output uses Sony’s listed USB combination — H.264 High Profile video + AAC-LC audio in MP4. Compliant H.264 video is copied untouched; other video must be encoded frame-by-frame. A 2h25 movie cannot realistically be re-encoded in under a minute; actual time depends on your Mac. HDR becomes SDR in this mode.',
+  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; other audio (including AC-3/E-AC-3/Opus) is rebuilt as AAC-LC. This is the fastest option and can approach a minute on fast storage when little media needs transcoding, but converting a full-length audio track or moving several GB may take longer.',
+  proof: '<strong>🛡️ PS5-proof:</strong> output uses Sony’s listed USB combination — H.264 High Profile video + AAC-LC audio in MP4. Compliant H.264 video is copied untouched; other video must be encoded frame-by-frame. A 2h25 movie cannot realistically be re-encoded in under a minute; AV1 sources also need browser AV1 decoding. Actual time depends on your Mac. HDR becomes SDR in this mode.',
   compress: '<strong>🗜️ Compress:</strong> video and audio are re-encoded to target size/quality. This takes real encode time, typically much longer than a remux; speed depends on the browser, codecs, and Mac hardware.',
 };
 
@@ -313,6 +339,15 @@ function setMode(mode) {
   els.modeNote.innerHTML = MODE_TEXT[mode];
   if (mode === 'proof' && state.canAvc === false) {
     els.modeNote.innerHTML += '<br><span style="color:var(--err)">⚠️ This browser can’t encode H.264 with WebCodecs. Re-encode modes need a compatible browser and hardware encoder; Turbo can still copy compatible video.</span>';
+  }
+  const av1 = state.analysis?.vinfo?.codec === 'av1' ? state.analysis.vinfo : null;
+  if (mode === 'proof' && av1) {
+    const unsupported = [];
+    if (!av1.browserCanDecode) unsupported.push('AV1 decoding');
+    if (!av1.browserCanEncodeAvc) unsupported.push(`H.264 encoding at ${av1.dw}×${av1.dh}`);
+    if (unsupported.length) {
+      els.modeNote.innerHTML += `<br><span style="color:var(--err)">⚠️ Browser capability check did not report ${unsupported.join(' or ')}. PS5-proof may fail; Turbo preserves AV1 and is not PS5-safe.</span>`;
+    }
   }
   updatePlan();
   updateEstimate();

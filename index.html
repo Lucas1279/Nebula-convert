@@ -217,7 +217,7 @@ ol.ps5-steps code{color:#bfe9ff}
 
     <h3>Conversion mode</h3>
     <div class="mode-row" id="modeRow">
-      <button class="mode-btn" data-mode="turbo"><b>🚀 Turbo remux <span class="tiny">(recommended)</span></b><span>Repacks the file with <strong>zero quality loss</strong>. Video is copied bit-for-bit; incompatible audio (including AC-3/E-AC-3, DTS, TrueHD, FLAC…) is rebuilt as AAC-LC using local WASM fallbacks. Speed ≈ your disk: a 20&nbsp;GB movie in ~1–3&nbsp;min.</span></button>
+      <button class="mode-btn" data-mode="turbo"><b>🚀 Turbo remux <span class="tiny">(recommended)</span></b><span>Repacks the file with <strong>zero video quality loss</strong>. Video is copied bit-for-bit; incompatible audio (including AC-3/E-AC-3/Opus, DTS, TrueHD, FLAC…) is rebuilt as AAC-LC using local WASM fallbacks. Video-only remuxes are storage-limited; converting a full-length 5.1 audio track adds minutes, and moving 20&nbsp;GB may take several minutes.</span></button>
       <button class="mode-btn" data-mode="proof"><b>🛡️ PS5-proof</b><span>Guarantees Sony’s official combo — <strong>H.264 High Profile + AAC-LC</strong>. Already-compatible video is still copied untouched; anything else is re-encoded (hardware-accelerated).</span></button>
       <button class="mode-btn" data-mode="compress"><b>🗜️ Compress smaller</b><span>Re-encodes video and audio to hit a <strong>target size</strong>. Pick a resolution cap and quality — the estimate updates live.</span></button>
     </div>
@@ -331,13 +331,13 @@ ol.ps5-steps code{color:#bfe9ff}
     <div class="faq-body">
       <p><strong>What exactly happens to my file?</strong> In <em>Turbo remux</em> the video (and any compatible audio)
         is copied bit-for-bit from the MKV into an MP4 container — identical picture and sound, zero re-encoding.
-        Only audio streams the PS5 can’t officially play (AC-3/E-AC-3, DTS, TrueHD, FLAC, Opus…) get re-encoded to <code>AAC-LC</code>. AC-3/E-AC-3 decoding and AAC encoding have bundled local WASM fallbacks.
+        Only audio streams the PS5 can’t officially play (AC-3/E-AC-3, DTS, TrueHD, FLAC, Opus…) get re-encoded to <code>AAC-LC</code>. AC-3/E-AC-3 decoding, common Opus mono/stereo and 5.1 decoding, and AAC encoding have bundled local WASM fallbacks; other Opus multichannel layouts may depend on browser support.
         Media is processed in chunks rather than loaded all at once into JavaScript memory. Actual memory and file-size limits depend on the browser; Safari’s staged-download path also needs enough OPFS quota and free disk space.</p>
       <p><strong>Why won’t some MP4s play on the PS5?</strong> Sony’s media player officially accepts MP4 with
         <code>H.264 High Profile (≤ Level 5.2)</code> video and <code>AAC-LC</code> audio, plus WebM (VP9/Opus).
-        Files that fail are usually: H.265/HEVC video (plays on most PS5s per community testing, but isn’t on Sony’s list),
-        DTS/AC-3/E-AC-3/TrueHD audio, 10-bit H.264, or anything on a FAT32 stick over 4&nbsp;GB.
-        The <em>PS5-proof</em> mode removes all doubt by rebuilding video as H.264 High + AAC.</p>
+        Files that fail are usually: H.265/HEVC or AV1 video (not on Sony’s official USB list),
+        DTS/AC-3/E-AC-3/Opus/TrueHD audio, 10-bit H.264, or anything on a FAT32 stick over 4&nbsp;GB.
+        The <em>PS5-proof</em> mode re-encodes video as H.264 High + AAC, if this browser can decode the source codec.</p>
       <p><strong>Can it finish in under a minute?</strong> Only sometimes. A Turbo remux copies video rather than re-encoding it, so speed depends on storage and whether audio needs conversion. Reading and writing a 20&nbsp;GB file at 500&nbsp;MB/s is about 80 seconds in theory; slower storage or E-AC-3-to-AAC conversion adds time. PS5-proof H.264 mode re-encodes every video frame and can take many minutes or longer for a feature-length movie; hardware acceleration does not make a 2h25 transcode a one-minute job.</p>
       <p><strong>Subtitles?</strong> The PS5’s Media Gallery ignores embedded subtitles entirely, and MKV subtitle
         formats (PGS, ASS/SSA) can’t live in an MP4 — subtitle tracks are dropped and listed in the log. Burn them in
@@ -349,7 +349,7 @@ ol.ps5-steps code{color:#bfe9ff}
         from camcorders), OGG, raw AAC/ADTS, MP3, FLAC, WAV. AVI, WMV, FLV and DVD VOBs aren’t supported in-browser —
         the page tells you immediately if you drop one.</p>
       <p><strong>Browser notes:</strong> Chrome/Edge can stream straight to a file or USB destination you choose.
-        Safari cannot show that picker, so its download path streams to origin-private site storage (OPFS) when available, then hands the completed MP4 to Safari Downloads; allow enough site-storage and disk space. OPFS may be unavailable in Safari Private Browsing. Video uses WebCodecs; local WASM fallbacks decode AC-3/E-AC-3 and encode AAC-LC when needed.</p>
+        Safari cannot show that picker, so its download path streams to origin-private site storage (OPFS) when available, then hands the completed MP4 to Safari Downloads; allow enough site-storage and disk space. OPFS may be unavailable in Safari Private Browsing. Video uses WebCodecs; local WASM fallbacks decode AC-3/E-AC-3/Opus and encode AAC-LC when needed.</p>
       <p><strong>PS4?</strong> PS5-proof output (H.264 ≤ 1080p… actually ≤ L4.2 for PS4) also plays on a PS4 from the
         same exFAT/FAT32 stick. HEVC does not play on PS4.</p>
       <p><strong>Privacy:</strong> this page has no server component and makes no network requests at conversion time.
@@ -359,7 +359,7 @@ ol.ps5-steps code{color:#bfe9ff}
 
   <footer>
     <div>🎬 <strong>NebulaConvert</strong> — sibling of <a href="https://lucas1279.github.io/nebula-iso2god/">Nebula ISO2GOD</a>, same nebula, different mission.</div>
-    <div class="tiny">Media engine: <a href="https://mediabunny.dev/">Mediabunny</a> (MPL-2.0) · WebCodecs · local WASM AC-3/E-AC-3 decoder + AAC-LC fallback · File System Access + Safari OPFS download fallback. Media stays on your device.</div>
+    <div class="tiny">Media engine: <a href="https://mediabunny.dev/">Mediabunny</a> (MPL-2.0) · WebCodecs · local WASM AC-3/E-AC-3/Opus decoders + AAC-LC fallback · <a href="vendor/THIRD-PARTY-LICENSES.md">third-party notices</a> · File System Access + Safari OPFS download fallback. Media stays on your device.</div>
   </footer>
 </div>
 
