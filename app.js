@@ -2,7 +2,7 @@
    NebulaConvert — MKV / any video → PS5+Mac-ready MP4, 100% local
    Engine: mediabunny (MPL-2.0) · Theme: Nebula ISO2GOD
    ================================================================ */
-import * as MB from './vendor/mediabunny.js?v=timestamp-diagnostic-20261024';
+import * as MB from './vendor/mediabunny.js?v=timestamp-trace-20261024';
 
 const $ = (id) => document.getElementById(id);
 
@@ -672,6 +672,7 @@ els.convertBtn.addEventListener('click', startConversion);
 async function startConversion() {
   if (state.converting || !state.analysis) return;
   clearError();
+  MB.resetOpusTimestampTrace?.();
 
   // resolve destination (user gesture — picker allowed here)
   let writable = null;
@@ -841,8 +842,30 @@ async function startConversion() {
     } else {
       console.error(err);
       els.progressStatus.textContent = 'Failed.';
-      log(`ERROR: ${err?.message || err}`);
-      showError(err?.message || String(err));
+      const errorMessage = err?.message || String(err);
+      const hasOpusSource = state.analysis?.ainfos?.some((audio) => audio.codec === 'opus');
+      let opusTraceMessage = '';
+      if (hasOpusSource) {
+        const traceData = MB.getOpusTimestampTrace?.() || { recent: [], regressions: [] };
+        const recent = Array.isArray(traceData.recent) ? traceData.recent : [];
+        const regressions = Array.isArray(traceData.regressions) ? traceData.regressions : [];
+        const recentText = recent.slice(-12).map((entry) => {
+          const pts = Number(entry.timestamp).toFixed(6);
+          const duration = Number.isFinite(entry.duration) ? `+${Number(entry.duration).toFixed(4)}` : '';
+          return `${pts}${duration}`;
+        }).join(', ') || 'none captured';
+        const regressionText = regressions.map((entry) => {
+          const pts = Number(entry.timestamp).toFixed(6);
+          const previous = Number.isFinite(entry.previousMaxTimestamp)
+            ? Number(entry.previousMaxTimestamp).toFixed(6)
+            : 'unknown';
+          return `${pts} after ${previous}`;
+        }).join('; ') || 'none recorded';
+        opusTraceMessage = `Bundled Opus input trace (seconds): recent PTS/duration ${recentText}. Backward Opus PTS packets skipped by the existing guard: ${regressionText}.`;
+      }
+      log(`ERROR: ${errorMessage}`);
+      if (opusTraceMessage) log(opusTraceMessage);
+      showError(errorMessage + (opusTraceMessage ? `\n\n${opusTraceMessage}` : ''));
     }
     state.converting = false; state.conversion = null;
     els.convertBtn.disabled = false;

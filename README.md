@@ -19,7 +19,7 @@ Then open `http://localhost:8000` (Chrome/Edge can save to a chosen path; Safari
 
 ## Deploy it (it’s fully static)
 
-`ghpages/` is the publish-ready package (latest Safari + HEVC-level + AV1/Opus update is `NebulaConvert-Safari-AV1-Opus-fix.zip`): upload its contents to GitHub Pages,
+`ghpages/` is the publish-ready package (Opus timestamp-trace diagnostic: `NebulaConvert-Opus-Timestamp-Trace.zip`): upload its contents to GitHub Pages,
 Netlify, any web host. It includes `.nojekyll` and a README with step-by-step publish instructions.
 GitHub Pages serves it over **HTTPS**, which is exactly what WebCodecs + File System Access need.
 
@@ -58,7 +58,7 @@ The dev copy lives in `site/` (served by `server.py`); keep both in sync if you 
 - `test-e2e.mjs` — upload → analysis → PS5 verdict → convert → download; ffprobe-verified H.264/AAC output.
 - `test-eac3-fallback.mjs` — E-AC-3 5.1 input converted to AAC-LC 5.1 in PS5-proof mode using local WASM decoder/encoder; full decode verified.
 - `test-opus-fallback.mjs` — synthetic AV1 + Opus 5.1 MKV remuxed to MP4 with AAC-LC 5.1; ffprobe, full decode, and 5.1 channel-tone mapping verified.
-- Timestamp diagnostic — a GOP timestamp error now reports output track number, media type, and codec. It asks for only the displayed text; the video stays on the user's device. The two synthetic timestamp regressions pass, but that does **not** establish that the original movie is fixed; it remains to be reproduced with the user's local excerpt.
+- Timestamp diagnosis — the original full movie fails on output track 2 (AAC audio): packet PTS 9.960s follows 9.9735s. The 20-second LosslessCut excerpt passes, so it is not a reproduction. The latest diagnostic preserves the current audio behavior and can show recent bundled Opus packet timestamps and any backward source PTS; no media leaves the browser.
 - `test-safari-opfs.mjs` — browser-download path streamed through OPFS and downloaded; also tested the dedicated-worker synchronous OPFS fallback; both outputs full-decode verified.
 - `test-hevc-level.mjs` — verifies HEVC `L120` is parsed as decimal level_idc 120 (Level 4.0), not hexadecimal.
 - `test-e2e3.mjs` — the streaming save-to-disk path with a mocked File System Access API: byte-exact output
