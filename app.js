@@ -74,6 +74,30 @@ const CODEC_LABEL = {
 };
 const codecLabel = (c) => (c && CODEC_LABEL[c]) || (c ? c.toUpperCase() : 'unknown');
 
+let aacFallbackRegistered = false;
+
+async function ensureAudioFallbacks() {
+  const tracks = state.analysis?.ainfos || [];
+  const needsAac = tracks.some((a) => a.codec !== 'aac');
+  if (!needsAac) return;
+
+  const hasDolbyDigital = tracks.some((a) => a.codec === 'ac3' || a.codec === 'eac3');
+  if (hasDolbyDigital) {
+    log('Using bundled local AC-3/E-AC-3 decoder (WASM) for Dolby audio.');
+  }
+
+  let nativeAac = false;
+  try { nativeAac = await MB.canEncodeAudio('aac'); } catch { /* use fallback */ }
+  if (!nativeAac && !aacFallbackRegistered) {
+    if (typeof MB.registerAacEncoder !== 'function') {
+      throw new Error('This browser has no AAC-LC encoder and the local fallback could not load.');
+    }
+    MB.registerAacEncoder();
+    aacFallbackRegistered = true;
+    log('Native AAC encoding is unavailable; using the bundled local AAC-LC encoder (WASM).');
+  }
+}
+
 /* ---------------- PS5 compatibility math ---------------- */
 // Sony's official PS5 USB list: MP4 = H.264 High Profile ≤ Level 5.2 + AAC-LC.
 // Community-verified extra: HEVC Main/Main10 (incl. 4K HDR) also plays on PS5.
@@ -101,10 +125,18 @@ async function renderSupport() {
     badges.push(`<span class="badge ${avc ? 'ok' : 'warn'}">${avc ? '✅' : '⚠️'} Hardware H.264 re-encode</span>`);
   } catch { /* ignore */ }
   try {
-    const aac = await MB.canEncodeAudio('aac');
-    badges.push(`<span class="badge ${aac ? 'ok' : 'warn'}">${aac ? '✅' : '⚠️'} AAC audio encode</span>`);
-    state.canAac = aac;
-  } catch { state.canAac = false; }
+    const nativeAac = await MB.canEncodeAudio('aac');
+    const fallback = typeof MB.registerAacEncoder === 'function';
+    const available = nativeAac || fallback;
+    const label = nativeAac ? 'AAC-LC audio encode' : (fallback ? 'AAC-LC audio encode (local WASM)' : 'AAC audio encode unavailable');
+    badges.push(`<span class="badge ${available ? 'ok' : 'warn'}">${available ? '✅' : '⚠️'} ${label}</span>`);
+    state.canAac = available;
+  } catch {
+    const fallback = typeof MB.registerAacEncoder === 'function';
+    state.canAac = fallback;
+    badges.push(`<span class="badge ${fallback ? 'ok' : 'warn'}">${fallback ? '✅ AAC-LC audio encode (local WASM)' : '⚠️ AAC audio encode unavailable'}</span>`);
+  }
+  badges.push('<span class="badge ok">✅ AC-3/E-AC-3 decode (local WASM)</span>');
   try {
     const hevc = await MB.canEncodeVideo('hevc');
     state.canHevc = hevc;
@@ -266,7 +298,7 @@ function renderAnalysis() {
 
 /* ---------------- modes ---------------- */
 const MODE_TEXT = {
-  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; anything else (DTS, TrueHD, AC-3, FLAC, Opus…) is rebuilt as AAC-LC so the PS5 has official sound. This is the <strong>only mode where a 20 GB movie can finish in about a minute</strong> — it moves bytes at disk speed with no quality loss.',
+  turbo: '<strong>🚀 Turbo remux:</strong> the MP4 is repacked from the original streams with <em>zero re-encoding of video</em>. AAC audio is copied; anything else (including AC-3/E-AC-3, DTS, TrueHD, FLAC, Opus…) is rebuilt as AAC-LC using native or bundled local WASM codecs so the PS5 has official sound. This is the <strong>only mode where a 20 GB movie can finish in about a minute</strong> — it moves bytes at disk speed with no video quality loss.',
   proof: '<strong>🛡️ PS5-proof:</strong> output is guaranteed to match Sony’s official spec — H.264 High Profile video + AAC-LC audio in a plain MP4. If your video is already compliant H.264 it is still <em>copied untouched</em> (only the audio gets fixed). Otherwise the video is re-encoded with hardware acceleration. HDR becomes SDR in this mode.',
   compress: '<strong>🗜️ Compress:</strong> video and audio are always re-encoded to hit your size/quality target. Great for shrinking a 20 GB rip into something a phone, tablet or small USB stick can hold. Takes real encode time (typically a few × faster than playback with hardware acceleration).',
 };
@@ -401,7 +433,7 @@ function buildTrackOptions() {
   const a = state.analysis;
   const mode = state.mode;
   // Per-track audio policy: AAC tracks get EMPTY options (pure copy — no accidental
-  // re-encode); anything else (DTS, AC-3, FLAC, Opus…) is rebuilt as AAC-LC.
+  // re-encode); anything else (AC-3/E-AC-3, DTS, FLAC, Opus…) is rebuilt as AAC-LC.
   const aacAudioPolicy = async (track) => {
     const opts = {};
     let codec = null;
@@ -496,6 +528,7 @@ async function startConversion() {
   log(`Loaded “${state.file.name}” (${fmtBytes(state.file.size)}) — mode: ${modeLabel}`);
 
   try {
+    await ensureAudioFallbacks();
     const conversion = await MB.Conversion.init({ input: state.input, output, video, audio, showWarnings: false });
     state.conversion = conversion;
 
@@ -515,7 +548,8 @@ async function startConversion() {
       throw new Error('The video track could not be produced here: this browser lacks a decoder/encoder for it, or the codec can’t be converted in a browser at all (MPEG-2, VC-1, MPEG-4 ASP/Xvid and DRM-protected content are the usual cases). Supported video: H.264, HEVC, VP8/VP9, AV1, ProRes. Turbo remux copies H.264/HEVC without needing any codec support.');
     }
     if (droppedAudio && state.analysis.ainfos.length && droppedAudio === state.analysis.ainfos.length) {
-      throw new Error('Audio could not be converted: this browser has no AAC encoder (needed for PS5/Mac-compatible sound). Chrome, Edge and Safari all include one.');
+      const codecs = [...new Set(state.analysis.ainfos.map((a) => codecLabel(a.codec)))].join(', ');
+      throw new Error(`All audio tracks (${codecs || 'unknown codec'}) were dropped. The local AC-3/E-AC-3 decoder and AAC-LC fallback are included; reload the page and retry. If it still fails, this source may be damaged or use an unsupported profile.`);
     }
     if (!conversion.isValid) {
       const reasons = [...new Set((conversion.discardedTracks || []).map((d) => d.reason))].join(', ');
