@@ -87,7 +87,7 @@ async function ensureAudioFallbacks() {
     log('Using bundled local AC-3/E-AC-3 decoder (WASM) for Dolby audio.');
   }
   if (tracks.some((a) => a.codec === 'opus')) {
-    log('Using bundled local Opus decoder (WASM) for Opus audio.');
+    log('Opus audio detected; bundled local decoder will be checked (mono/stereo or standard 5.1 only).');
   }
 
   let nativeAac = false;
@@ -771,7 +771,11 @@ async function startConversion() {
     }
     if (droppedAudio && state.analysis.ainfos.length && droppedAudio === state.analysis.ainfos.length) {
       const codecs = [...new Set(state.analysis.ainfos.map((a) => codecLabel(a.codec)))].join(', ');
-      throw new Error(`All audio tracks (${codecs || 'unknown codec'}) were dropped. The local AC-3/E-AC-3 decoder and AAC-LC fallback are included; reload the page and retry. If it still fails, this source may be damaged or use an unsupported profile.`);
+      const hasOpus = state.analysis.ainfos.some((a) => a.codec === 'opus');
+      const hint = hasOpus
+        ? 'This build includes a local Opus decoder for mono/stereo and standard 5.1. If Opus is still dropped, confirm the complete latest package is deployed; the source may use a different Opus mapping/header.'
+        : 'This build includes local AC-3/E-AC-3 decoders and an AAC-LC fallback. Confirm the complete latest package is deployed; the source may be damaged or use an unsupported profile.';
+      throw new Error(`All audio tracks (${codecs || 'unknown codec'}) were dropped. ${hint}`);
     }
     if (!conversion.isValid) {
       const reasons = [...new Set((conversion.discardedTracks || []).map((d) => d.reason))].join(', ');
