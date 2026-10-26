@@ -1,0 +1,16 @@
+Website update package
+
+To publish this update, upload/replace these files in the root of the GitHub repository used by GitHub Pages, commit to the published branch, then wait for Pages to redeploy:
+- index.html
+- ftp_helper.py
+- README_FTP.md
+- the complete vendor/ directory (keep its subfolders and files)
+- nebula-iso2god-timeout-fix.zip
+- Nebula-ISO2GOD-One-File.zip
+- Nebula-ISO2GOD-One-File-Fixed.zip
+
+This version restores a separate blue Xbox FTP transfer bar beneath the UFO while keeping the overall conversion bar. During ISO-to-GOD FTP output it tracks the current Data#### file, bytes, and transfer speed; the raw XBLA/XBLIG uploader uses the same blue transfer treatment and shows its filename. It also includes the rotating UFO disc, staggered cyan/blue/lavender/pink lights, clearer .7z indexing/extraction progress, storage failure guidance, and automatic cleanup. Data needed for a pending FTP retry is retained.
+
+The ISO workflow can import .7z archives locally in recent Safari, Chrome, or Edge over HTTPS or the updated local helper at http://127.0.0.1:8765/ (not file://). Only supported images are extracted; other entries are skipped and the original archive is unchanged. Temporary images are stored in browser site storage (not Finder files); allow free storage roughly equal to the extracted image.
+
+The app does not delete your downloaded .command/.zip files or partial files already written to the Xbox. Remove those manually if desired. FTP is unencrypted and should only be used on a trusted home LAN.
